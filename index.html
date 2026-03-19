@@ -40,493 +40,286 @@ import functools
 import itertools
 from functools import lru_cache, total_ordering
 
-F = FreeAlgebra(QQ, 2, "e0, e1")
-e0 = F.0
-e1 = F.1
-
-def is_FormalSum(val):
-    try:
-        val + FormalSum([])
-        return True
-    except:
-        return False
-
-def index_to_word(ind):
-    ret = F(0)
-    for coeff, ks in ind:
-        ret += (-1)^len(ks)* coeff * Fmul(e1*e0^(k-1) for k in ks)
-    return ret
-
-def word_to_index(fe):
-    dic = F(fe).monomial_coefficients()
-    ret = FormalSum([])
-    for key in dic:
-        ks = []
-        for e in key.to_list():
-            if F(e)==e1:
-                ks.append(1)
-            elif F(e)==e0:
-                ks[-1] += 1
-            else:
-                assert False
-        ret += (-1)^len(ks) * dic[key] * index(*ks)
-    return ret
-
-def LiftIndex(zero):
-    def decorator(func):
-        def obj_to_FormalSum(obj):
-            if obj.parent()==F:
-                obj = word_to_index(obj)
-            assert is_FormalSum(obj)
-            assert all(type(v)==monoindex for c,v in obj)
-            return obj
-
-        @functools.wraps(func)
-        def wrapper(*args, **kwags):
-            formal_sums = [obj_to_FormalSum(obj) for obj in args]
-            ret = zero
-            for formal_sum_arg in itertools.product(*formal_sums):
-                coeff = mul(c for c,v in formal_sum_arg )
-                arg = tuple(v.ks for c,v in formal_sum_arg )
-                ret += coeff * func(*arg, **kwags)
-            if args[0].parent()==F:
-                ret = index_to_word(ret)
-            return ret
-        return wrapper
-    return decorator
-
-def LiftWord(zero):
-    def decorator(func):
-        def obj_to_list_of_monomials(obj):
-            if is_FormalSum(obj):
-                obj = index_to_word(obj)
-
-            dic = obj.monomial_coefficients()
-            return [ (dic[key], key) for key in dic ]
-        @functools.wraps(func)
-        def wrapper(*args, **kwags):
-            list_of_list_of_monomials = [obj_to_list_of_monomials(obj) for obj in args]
-            ret = zero
-            for monomials in itertools.product(*list_of_list_of_monomials ):
-                coeff = mul(c for c,v in monomials )
-                arg = list( [F(e) for e in v.to_list()] for c,v in monomials )
-                ret += coeff * func(*arg, **kwags)
-            if is_FormalSum(args[0]):
-                ret = word_to_index(ret)
-            return ret
-        return wrapper
-    return decorator
-
-
-@LiftWord(zero = F(0))
-def dual(es):
-    return (-1)^len(es) * Fmul([e1 if e==e0 else e0 for e in es[::-1]])
-
-def Fmul(seq):
-    ret = F(1)
-    for e in seq:ret*=e
-    return ret
-
-def lift_to_fr(v):
-    data = FormalSum([(1, (v,))])
-    FR = FormalRing(QQ)
-    return FR.Element(parent = FR, data = data)
-
-def lift_to_fs(v):
-    return FormalSum([(1,v)])
-
-@LiftWord(zero = F(0))
-def shuffle(_es1,_es2):
-    def rec(es1, es2):
-        ret = F(0)
-        if len(es1)==0 and len(es2)==0:
-            return F(1)
-        if len(es1)!=0:
-            ret += es1[0] * rec(es1[1:], es2)
-        if len(es2)!=0:
-            ret += es2[0] * rec(es1, es2[1:])
-        return ret
-    return rec(_es1, _es2)
-
-class FormalRingElement(CommutativeRingElement):
-    def __init__(self, parent, data):
-        if parent is None:
-            raise ValueError("The parent must be provided")
-        self.data = FormalSum([]) + data
-        return CommutativeRingElement.__init__(self, parent)
-
-    def __eq__(self, other):
-        return (self - other).data == FormalSum([])
-
-    def _repr_(self):
-        ret = ""
-        for coeff, seq in self.data:
-            count = {}
-            for v in seq:
-                if v not in count:
-                    count[v]=1
-                else:
-                    count[v] += 1
-            factors = []
-            for v in count:
-                if count[v]==1:
-                    factors.append( str(v) )
-                else:
-                    factors.append( str(v) + "^" + str(count[v]) )
-            mono = "*".join(factors)
-            if mono=="":
-                term = str(coeff)
-            elif coeff==1:
-                term = mono
-            elif coeff==-1:
-                term = "-" + mono
-            else:
-                term = str(coeff) + "*" + mono
-            if ret!="" and term[0]!="-":
-                term = "+" + term
-            if ret!="" and term[0]=="+":
-                term = " + " + term[1:]
-            elif  ret!="" and term[0]=="-":
-                term = " - " + term[1:]
-            ret += term
-        if ret=="":
-            ret = "0"
-        return str(ret)
-
-    def _add_(self, other):
-        C = self.__class__
-        return C(self.parent(), self.data + other.data)
-
-    def _sub_(self, other):
-        C = self.__class__
-        return C(self.parent(), self.data - other.data)
-
-    def _mul_(self, other):
-        C = self.__class__
-        new_data = FormalSum([])
-        for c1, seq1 in self.data:
-            for c2,seq2 in other.data:
-                seq = tuple(sorted(seq1+seq2))
-                new_data += c1*c2*FormalSum([ (1, seq ) ])
-        return C(self.parent(), new_data)
-
-class FormalRing(UniqueRepresentation, CommutativeRing):
-    Element = FormalRingElement
-
-    def _repr_(self):
-        return f"Ring generated by formal objects over {self.base()}"
-
-    def _element_constructor_(self, *args, **kwds):
-        return self.element_class(self, *args, **kwds)
-
-    def _coerce_map_from_(self, S):
-        def coerce(R, x):
-            try:
-                ret = R.Element(parent = self, data = x*FormalSum([(1, ())]))
-            except:
-                print(f"Failed for coercing: R = {R}, S = {S}, x = {x}")
-                assert False
-            return ret
-        return coerce
-
-@lru_cache(maxsize = None)
-def _real_multizeta(ks, prec, t = 0):
-    return RealField(prec)(sage.libs.pari.pari.zetamult( s = pari(ks[::-1]), t = t, precision = prec ).sage() )
-
-def LiftZeta(zero):
-    def decorator(func):
-        def obj_to_FormalSum(obj):
-            if obj.parent()==F:
-                obj = word_to_index(obj)
-            assert is_FormalSum(obj)
-            assert all(type(v)==monoindex for c,v in obj)
-            return obj
-
-        @functools.wraps(func)
-        def wrapper(*args, **kwags):
-            if len(args)==1 and type(args[0])!=int:
-                u = args[0]
-                if u.parent()==F:
-                    u = word_to_index(u)
-                if is_FormalSum(u):
-                    return zero + sum( c*func(*v.ks, **kwags) for c,v in u )
-            return func(*args,**kwags)
-        return wrapper
-    return decorator
-
-@LiftZeta(zero = FormalRing(QQ)(0) )
-@lru_cache(maxsize = None)
-def mzv(*ks, t = 0):
-    if len(ks)==0:
-        return FormalRing(QQ)(1)
-    t = QQ(t)
-    gen = {}
-    gen[2] = [(2,)]
-    gen[3] = [(3,)]
-    gen[5] = [(5,)]
-    gen[7] = [(7,)]
-    gen[8] = [(3,5)]
-    gen[9] = [(9,)]
-    gen[10] = [(3,7)]
-    gen[11] = [(3,3,5), (11,)]
-    gen[12] = [(1,1,4,6), (3,9)]
-    gen[13] = [(3,5,5,), (3,3,7), (13,)]
-    gen[14] = [(3,3,3,5,), (5,9), (3,11)]
-    gen[15] = [(1,1,3,4,6), (3,3,9), (5,3,7,), (15,)]
-    gen[16] = [(1,1,6,8), (3,3,3,7), (3,3,5,5),(3,13), (5,11)]
-    gen[17] = [(1,1,3,6,6), (3,3,3,3,5), (3,3,11), (3,5,9), (5,3,9), (5,5,7), (17,)]
-
-    weight = sum(ks)
-    if weight >17:
-        raise NotImplementedError("Multiple zeta value for weight >17 is not implemented")
-
-    gen_lin = [[] for _ in (0..weight)]
-    gen_lin[0].append(())
-    for w in (0..weight):
-        if w in gen:
-            for ls in gen[w]:
-                for w2 in (0..weight - w):
-                    for seq in gen_lin[w2]:
-                        gen_lin[w+w2].append( (ls,)+seq )
-
-    prec = 64
-    rel_coeff = []
-    while True:
-        vals = []
-        for seq in gen_lin[weight]:
-            val = RealField(prec = prec)(1)
-            for ls in seq:
-                val *= _real_multizeta(ks = ls, prec = prec)
-            vals.append(val)
-        vals.append( _real_multizeta(ks = ks, prec = prec, t = t) )
-        new_rel_coeff = sage.libs.pari.pari.lindep(v = vals).sage()
-        if new_rel_coeff[-1]<0:
-            new_rel_coeff = [-v for v in new_rel_coeff]
-        if new_rel_coeff==rel_coeff:
-            break
-        rel_coeff = new_rel_coeff
-        prec*=2
-    FR =  FormalRing(QQ)
-    ret =FR(0)
-    for i,seq in enumerate(gen_lin[weight]):
-        if rel_coeff[i]!=0:
-            v = -rel_coeff[i]/rel_coeff[-1]
-            for ls in seq:
-                if ls==(2,):
-                    v *= 1/6*lift_to_fr("π")^2
-                else:
-                    v *= lift_to_fr( "ζ" + "(" + ",".join(str(l) for l in ls) + ")")
-            ret += v
-    return ret
-
-def mzsv(*ks):
-    return mzv(*ks, t=1)
-
-def _modulo_zeta2(fr):
-    new_data = FormalSum([])
-    for coeff, seq in fr.data:
-        seq = tuple(sorted(seq) )
-        if "π" not in seq:
-            new_data += coeff * lift_to_fs(seq)
-    FR = FormalRing(QQ)
-    return FR.Element(parent = FR, data = new_data )
-
-def star_index(ks):
-    def rec(ls):
-        if len(ls)<=1:
-            return [ls]
-        return [ls[:1]+seq for seq in rec(ls[1:])] + rec((ls[0]+ls[1],) + ls[2:])
-    return rec(tuple(ks) )
-
-@LiftZeta(zero = FormalRing(QQ)(0) )
-@lru_cache(maxsize = None)
-def shuffle_regularized_mzv(*ks):
-    return mzv(shuffle_regularization(index(ks) ) )
-
-@LiftZeta(zero = FormalRing(QQ)(0) )
-@lru_cache(maxsize = None)
-def shuffle_regularized_mzsv(*ks):
-    return FormalRing(QQ)(0) + sum( shuffle_regularized_mzv(index(*ls) )  for ls in star_index(ks))
-
-@LiftZeta(zero = FormalRing(QQ)(0) )
-@lru_cache(maxsize = None)
-def stuffle_regularized_mzv(*ks):
-    return mzv(stuffle_regularization(index(ks) ) )
-
-@LiftZeta(zero = FormalRing(QQ)(0) )
-@lru_cache(maxsize = None)
-def stuffle_regularized_mzsv(*ks):
-    return FormalRing(QQ)(0) + sum( stuffle_regularized_mzv(index(*ls) )  for ls in star_index(ks))
-
-@LiftZeta(zero = FormalRing(QQ)(0) )
-@lru_cache(maxsize = None)
-def shuffle_regularized_symmetric_mzv(*ks):
-    ret = FormalRing(QQ)(0)
-    for j in (0..len(ks) ):
-        ret += (-1)^sum(ks[j:]) * shuffle_regularized_mzv(index(ks[:j]) )  * shuffle_regularized_mzv(index(ks[j:][::-1]) )
-    return ret
-
-@LiftZeta(zero = FormalRing(QQ)(0) )
-@lru_cache(maxsize = None)
-def shuffle_regularized_symmetric_mzsv(*ks):
-    return FormalRing(QQ)(0) + sum( shuffle_regularized_symmetric_mzv(index(*ls) )  for ls in star_index(ks))
-
-
-@LiftZeta(zero = FormalRing(QQ)(0) )
-@lru_cache(maxsize = None)
-def stuffle_regularized_symmetric_mzv(*ks):
-    ret = FormalRing(QQ)(0)
-    for j in (0..len(ks) ):
-        ret += (-1)^sum(ks[j:]) * stuffle_regularized_mzv(index(ks[:j]) )  * stuffle_regularized_mzv(index(ks[j:][::-1]) )
-    return ret
-
-@LiftZeta(zero = FormalRing(QQ)(0) )
-@lru_cache(maxsize = None)
-def stuffle_regularized_symmetric_mzsv(*ks):
-    return FormalRing(QQ)(0) + sum( stuffle_regularized_symmetric_mzv(index(*ls) )  for ls in star_index(ks))
-
-@LiftZeta(zero = FormalRing(QQ)(0) )
-@lru_cache(maxsize = None)
-def symmetric_mzv(*ks):
-    return _modulo_zeta2( shuffle_regularized_symmetric_mzv(index(ks) ) )
-
-def symmetric_mzsv(*ks):
-    return _modulo_zeta2( shuffle_regularized_symmetric_mzsv(index(ks) ) )
-
-@total_ordering
-class monoindex:
-    def __init__(self, *ks):
-        self.ks = ks
-    def __repr__(self):
-        return "index(" + ",".join(str(k) for k in self.ks) + ")"
-    def __eq__(self, other):
-        return self.ks == other.ks
-    def __lt__(self, other):
-        return self.ks < other.ks
-    def __hash__(self):
-        return hash(self.ks)
-    def __len__(self):
-        return len(self.ks)
-    def __getitem__(self, key):
-        if type(key)==slice:
-            return self.__class__( *self.ks[key] )
-        else:
-            return self.ks[key]
-    def __add__(self,other):
-        return self.__class__(*(self.ks + other.ks) )
-
-def index(*ks):
-    if len(ks)==1 and ( type(ks[0])==tuple or type(ks[0])==list ):
-        ks = tuple(ks[0])
-    ks = tuple(ks)
-    return lift_to_fs( monoindex(*ks) )
-
-@LiftIndex(zero = FormalSum([]))
-def Concatenate(ks, ls):
-    return index(ks+ls)
-
-@LiftIndex(zero = FormalSum([]))
-def stuffle(_ks, _ls):
-    assert type(_ks)==tuple and type(_ls)==tuple
-    def rec(ks, ls):
-        if len(ks)==0 or len(ls)==0:
-            return index( ks+ls )
-        return Concatenate(index(ks[:1]), rec(ks[1:],ls) ) + \
-                Concatenate(index(ls[:1]), rec(ks,ls[1:])) + \
-                Concatenate(index(ks[0]+ls[0],), rec(ks[1:],ls[1:]))
-    return rec(_ks, _ls)
-
-
-@LiftIndex(zero = FormalSum([]))
-def stuffle_regularization(ks):
-    assert type(ks)==tuple
-    self = stuffle_regularization
-    j = 0
-    while j<len(ks) and ks[-1-j]==1:
-        j += 1
-    if j==0:
-        return index(ks)
-    v1  = index(ks)
-    v2 = 1/j*stuffle(index(ks[:-1]), index(1))
-    return self( index(ks) - 1/j*stuffle(index(ks[:-1]), index(1)) )
-
-@LiftIndex(zero = FormalSum([]))
-def shuffle_regularization(ks):
-    self = shuffle_regularization
-    j = 0
-    while j<len(ks) and ks[-1-j]==1:
-        j += 1
-    if j==0:
-        return index(ks)
-    return shuffle_regularization( index(ks) - 1/j*shuffle(index(ks[:-1]), index(1)) )
-
-@LiftIndex(zero = FormalSum([]))
-def shuffle_regularization(ks):
-    self = shuffle_regularization
-    j = 0
-    while j<len(ks) and ks[-1-j]==1:
-        j += 1
-    if j==0:
-        return index(ks)
-    return shuffle_regularization( index(ks) - 1/j*shuffle(index(ks[:-1]), index(1)) )
-
-@LiftIndex(zero = FormalSum([]))
-def Hoffman_dual(ks):
-    self = Hoffman_dual
-    s = ""
-    for i,k in enumerate(ks):
-        if i!=0:
-            s+=","
-        s += "+"*(int(k-1) )
-    ret = [1]
-    for c in s:
-        if c=="+":
-            ret.append(1)
-        elif c==",":
-            ret[-1]+=1
-        else:
-            assert False
-    return index(ret)
-
-def test():
-    assert mzv(1,2) == ζ(3)
-    assert mzv(2,3) == 1/2*ζ(3)*π^2 - 11/2*ζ(5)
-    assert ζ(2,3) == 1/2*ζ(3)*π^2 - 11/2*ζ(5)
-    assert mzsv(1,2) == 2*ζ(3)
-    assert mzv(1,2,t=1) == 2*ζ(3)
-
-    assert stuffle(index(2), index(5)) == index(2,5) + index(5,2) + index(7)
-    assert stuffle(index(2,3), index(5)) == index(2,3,5) + index(2,5,3) + index(2,8) + index(5,2,3) + index(7,3)
-    assert stuffle(-e1*e0, -e1*e0*e0*e0*e0) == -e1*e0^6 + e1*e0^4*e1*e0 + e1*e0*e1*e0^4
-
-    assert shuffle(e1*e0, e1 ) == e1*e0*e1 + 2*e1^2*e0
-    assert shuffle(index(2), index(1)) == index(2,1) + 2*index(1,2)
-
-    assert dual(e1*e0*e0*e1*e0) == -e1*e0*e1^2*e0
-    assert dual(index(3,2)) == index(2,1,2)
-
-    assert Hoffman_dual( index(3,4) ) == index(1,1,2,1,1,1)
-
-    assert shuffle_regularization( index(5,1) ) == -index(4,2) - index(3,3) - index(2,4) - 2*index(1,5)
-    assert shuffle_regularization( shuffle(index(1,1), index(2,3) ) ) == 0
-
-    assert shuffle_regularized_mzv(2,1) == -2*ζ(3)
-
-    assert stuffle_regularization( index(5,1) ) == -index(1,5) - index(6)
-    assert stuffle_regularized_mzv(1,1) == -1/12*π^2
-
-    assert shuffle_regularized_symmetric_mzv(3,8) == -4/315*ζ(5)*π^6 - 1/3*ζ(7)*π^4 - 12*ζ(9)*π^2 + 165*ζ(11)
-    assert stuffle_regularized_symmetric_mzv(3,8) == -4/315*ζ(5)*π^6 - 1/3*ζ(7)*π^4 - 12*ζ(9)*π^2 + 165*ζ(11)
-    assert symmetric_mzv(3,8) == 165*ζ(11)
-
-    assert shuffle_regularized_symmetric_mzv(1,1) == 0
-    assert shuffle_regularized_symmetric_mzsv(1,1) == 1/3*π^2
-    assert stuffle_regularized_symmetric_mzv(1,1) == -1/6*π^2
-    assert stuffle_regularized_symmetric_mzsv(1,1) == 1/6*π^2
-
-
-ζ = mzv
-π = lift_to_fr("π")
+import sympy as sp
+import itertools
+from functools import reduce
+from operator import mul
+
+# -----------------------
+# 基本関数
+# -----------------------
+
+def pow_func(x, n):
+    return 1 if n == 0 else x**n
+
+def compositions(k, r):
+    return [t for t in itertools.product(range(k+1), repeat=r) if sum(t) == k]
+
+Z  = sp.Function("Z")
+ZS = sp.Function("ZS")
+ZF  = sp.Function("ZF")
+zeta2 = sp.Function("zeta2")
+zetav = sp.Function("zetav")
+zeta = sp.Function("zeta")
+zetasym = sp.Function("zetasym")
+
+def P2Hom(X, k):
+    r = len(X)
+    total = 0
+    for a in compositions(k, r):
+        prod = reduce(mul, (pow_func(X[j], a[j]) for j in range(r)), 1)
+        total += zeta2(*[ai+1 for ai in a]) * prod
+    return sp.expand(total)
+
+def ZHom(X, k):
+    r = len(X)
+    total = 0
+    for a in compositions(k, r):
+        prod = reduce(mul, (pow_func(X[j], a[j]) for j in range(r)), 1)
+        total += zeta(*[ai+1 for ai in a]) * prod
+    return sp.expand(total)
+
+def ZsymHom(X, k):
+    r = len(X)
+    total = 0
+    for a in compositions(k, r):
+        prod = reduce(mul, (pow_func(X[j], a[j]) for j in range(r)), 1)
+        total += zetasym(*[ai+1 for ai in a]) * prod
+    return sp.expand(total)
+
+def ZVHom(X, k):
+    r = len(X)
+    total = 0
+    for a in compositions(k, r):
+        prod = reduce(mul, (pow_func(X[j], a[j]) for j in range(r)), 1)
+        total += (-1)**sum(ai+1 for ai in a) * zetav(*[ai+1 for ai in a]) * prod
+    return sp.expand(X[0]*X[-1]*total)
+
+def ZZHom(X, Y, k):
+    total = sum(ZHom(X, w) * ZHom(Y, k-w) for w in range(k+1))
+    return sp.expand(total)
+
+# -----------------------
+# Relation 系
+# -----------------------
+
+def Relation1(X,k):
+    X = list(X) if not isinstance(X, list) else X
+    r = len(X)
+    total = P2Hom(X, k)  # Mathematica の P2@@X
+    for i in range(1, r-1):
+        left = [X[i]-X[j] for j in range(i)]
+        right = [X[j]-X[i] for j in range(i+1,r)]
+        total -= (-1)**i * (X[i] - X[-1]) * ZZHom(left, right,k-1)
+    return sp.expand(total)
+
+def Relation0(X,k):
+    X = list(X) if not isinstance(X, list) else X
+    r = len(X)
+    total = 0
+    for i in range(1, r-1):
+        left = [X[i]-X[j] for j in range(i)]
+        right = [X[j]-X[i] for j in range(i+1,r)]
+        total = (-1)**i * (X[i] - X[-1]) * ZZHom(left, right,k-1)
+    return sp.expand(total)
+
+def Relation2(X, k):
+    X = list(X) if not isinstance(X, list) else X
+    r = len(X)
+    Xs = [X[i] - X[-1] for i in range(r-1)]  # Take[X, r-1] - X[[r]]
+
+    P1 = 0
+    for i in range(1, r-1):  # i=2..r-1 → Pythonでは 1..r-2
+        left = [X[i] - X[j] for j in range(i)]
+        right = [X[j] - X[i] for j in range(i+1, r)]
+        P1 += (-1)**i * ZZHom(list(reversed(left)), right, k-1)
+
+    ZS = 0
+    for i in range(1, r-1):  # i=1..r-2
+        left = Xs[:i]
+        right = [-x for x in reversed(Xs[i:])]
+        ZS += (-1)**(r-1-i) * ZZHom(left, right, k-1)
+    ZS -= ZsymHom(Xs, k-1)
+
+    return sp.expand(P1 - ZS)
+
+def Relation3(X,k):
+    X = list(X) if not isinstance(X, list) else X
+    X1 = X[0]
+
+    def Rem1(XL):
+        XL_copy = XL.copy()
+        term = -ZVHom(XL_copy,k-2) + Relation0(XL_copy,k)
+        XL_copy1 = XL_copy.copy(); XL_copy1[0]=0
+        XL_copy2 = XL_copy.copy(); XL_copy2[-1]=0
+        XL_copy3 = XL_copy.copy(); XL_copy3[0]=0; XL_copy3[-1]=0
+        term -= Relation0(XL_copy1,k)
+        term -= Relation0(XL_copy2,k)
+        term += Relation0(XL_copy3,k)
+        return sp.expand(term)
+
+    term1 = Rem1(X)
+    X_replace = X.copy(); X_replace[-1]=0
+    term2 = X1 * Relation2(X_replace,k)
+    X_replace2 = X.copy(); X_replace2[0]=0
+    term3 = Rem1([x-X1 for x in X_replace2])
+    return sp.expand(1/X1 * (term1 + term2 + term3))
+
+# -----------------------
+# Dual 系
+# -----------------------
+
+def shiftEnds(k):
+    k = list(k) if not isinstance(k, list) else k
+    
+    if len(k) == 1:
+        return [k[0] - 2]
+    else:
+        res = k.copy()
+        res[0] -= 1      # 1 -> k[[1]] - 1
+        res[-1] -= 1     # -1 -> k[[-1]] - 1
+        return res
+    
+def DualIndex(k):
+    k = list(k) if not isinstance(k, list) else k
+    n = sum(k)
+    
+    acc = []
+    s = 0
+    for x in k:
+        s += x
+        acc.append(s)
+    cuts = acc[:-1]
+    
+    pos = [i for i in range(1, n) if i not in cuts]
+    seq = [0] + pos + [n]
+    result = [seq[i+1] - seq[i] for i in range(len(seq)-1)]
+    return result
+
+# -----------------------
+# Fの計算 系
+# -----------------------
+
+def rotate_right(lst, i):
+    i = i % len(lst)
+    return lst[-i:] + lst[:-i]
+
+def rotate_left(lst, i):
+    i = i % len(lst)
+    return lst[i:] + lst[:i]
+
+def ZEqualList(X, k):
+    X = list(X) if not isinstance(X, list) else X
+    r = len(X)
+    result = []
+
+    for i in range(0, r-1):
+        # Join[{X[[1]]}, RotateRight[Rest[X], i]]
+        term1_list = [X[0]] + rotate_right(X[1:], i)
+        term1 = Relation1(term1_list, k)
+
+        # (X[[1]] - X[[-1 - i]]) * Sum[...]
+        factor = X[0] - X[-1 - i]
+
+        s = 0
+        for j in range(1, i+1):
+            tmp = rotate_left(X[1:], j-1-i)
+            tmp = [x - X[0] for x in tmp] + [0]
+            s += Relation3(tmp, k)
+
+        expr = sp.together(term1 - factor * s)
+        expr = sp.cancel(expr)     # ← これを追加
+        result.append(sp.expand(expr))
+
+    return result
+
+def FList(X, k):
+    X = list(X) if not isinstance(X, list) else X
+    r = len(X)
+
+    Zlist = ZEqualList(X, k)
+    result = []
+
+    for i in range(r-1):  # ← 修正ポイント
+        expr = sp.expand(Zlist[i])
+        deriv = sp.diff(expr, X[0], X[-(i+1)])
+        result.append(deriv)
+
+    result = [expr.subs(X[0], 0) for expr in result]
+
+    return result
+
+def Last1Equ(X, k):
+    X = list(X) if not isinstance(X, list) else X
+    F = FList(X, k)
+    r = len(X)
+    term1 = F[0]
+    totalF = sum(F, sp.Integer(0))
+
+    term2 = sp.Rational(1, k - 2 + r) * sp.diff(
+        X[-1] * totalF, X[-1]
+    )
+
+    expr = term1 - term2
+    return sp.expand(expr)
+
+def replace_zeta2(expr):
+    # 式全体を再帰的に置換
+    if expr.func == zeta2:
+        XL = expr.args
+        if all(x.is_Integer for x in XL):
+            return ZS(*DualIndex(shiftEnds(list(XL))))
+        return expr
+    elif expr.args:
+        # 再帰的に args を置換
+        new_args = tuple(replace_zeta2(a) for a in expr.args)
+        return expr.func(*new_args)
+    else:
+        return expr
+    
+def replace_zetav(expr):
+    if expr.func == zetav:
+        XL = expr.args
+        if all(x.is_Integer for x in XL):
+            return ZS(*DualIndex(list(XL)))
+        return expr
+    elif expr.args:
+        new_args = tuple(replace_zetav(a) for a in expr.args)
+        return expr.func(*new_args)
+    else:
+        return expr
+
+def Last2Equ(X, k):
+    expr = Last1Equ(X, k)
+    expr = sp.together(expr)
+
+    expr = replace_zeta2(expr)
+    expr = replace_zetav(expr)
+
+    expr = expr.replace(lambda e: e.func == zeta, lambda e: Z(*e.args))
+    expr = expr.replace(lambda e: e.func == zetasym, lambda e: ZS(*e.args))
+
+    return expr
+
+def Zetaeq(ind):
+    ind = list(ind)
+    r = len(ind)
+    k = sum(ind)
+    Xlist = [sp.Symbol(f"X{i}") for i in range(1, r+2)]
+    expr = Last2Equ(Xlist, k - r + 1)
+
+    # 係数抽出
+    monomial = 1
+    for i in range(2, r+2):
+        power = ind[i-2] - 1 - (1 if i == r+1 else 0)
+        monomial *= Xlist[i-1]**power
+
+    coeff = sp.expand(expr).coeff(monomial)
+
+    return sp.expand(coeff / (ind[-1] - 1))
+
+result = Zetaeq([2,3])
+print(result)
 
 </script>
 </div>
