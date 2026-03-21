@@ -1,49 +1,300 @@
 <!DOCTYPE HTML>
 <html>
-  <head>
+<head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width">
-    <title>Multiple Zeta Values online tools</title>
+    <title>An explicit formula of MZVs in terms of symmetric MZVs</title>
     <script src="https://sagecell.sagemath.org/static/embedded_sagecell.js"></script>
     <script>
     // Make the div with id 'mycell' a Sage cell
-    sagecell.makeSagecell({inputLocation:  'div.precompute',
-                           editor: 'codemirror-readonly',
-                           hide: ['output', 'editor'],
-                           linked: 'true',
-                           linkKey: 'main',
-                           evalButtonText: 'Activate'});
+    sagecell.makeSagecell({
+        inputLocation:  'div.precompute',
+        editor: 'codemirror-readonly',
+        hide: ['output', 'editor', 'evalButton'],
+        linked: 'true',
+        linkKey: 'main',
+        evalButtonText: 'Activate',
+        autoeval: true
+    });
     // Make *any* div with class 'compute' a Sage cell
     sagecell.makeSagecell({inputLocation: 'div.compute',
                            linked: 'true',
                            linkKey: 'main',
-                           evalButtonText: 'Evaluate'});
+                           evalButtonText: 'Enter'});
     </script>
+    
     <style>
-      .example {
-        color: black;
-        background-color: #EEEEEE;
-        width: auto*;
-      }
-      .example_output {
-        color:black;
-        background-color: #e0e0e0;
-      }
-    </style>
-  </head>
-  <body>
-  <h1>Multiple Zeta Values online tools</h1>
-  Click the &ldquo;Activate&rdquo; button below first.
-    <div class="precompute"><script type="text/x-sage">
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            line-height: 1.6;
+        }
+    
+        /* 入力欄のサイズ */
+        .compute .CodeMirror {
+            width: 300px;
+            height: 38px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            padding: 4px;
+        }
+    
+        /* CodeMirror内部の文字サイズ（重要） */
+        .compute .CodeMirror pre {
+            font-size: 16px;
+        }
+    
+        /* ボタン */
+        .compute .sagecell_evalButton {
+            height: 40px;
+            padding: 0 16px;
+            font-size: 16px;
+            margin-top: 0 !important;
+        }
 
-import functools
-import itertools
-from functools import lru_cache, total_ordering
+
+    </style>
+</head>
+<body>
+<h1>An explicit formula of MZVs in terms of symmetric MZVs</h1>
+<div class="precompute"><script type="text/x-sage">
+
+
 
 import sympy as sp
 import itertools
 from functools import reduce
 from operator import mul
+
+import sympy as sp
+from functools import lru_cache
+from math import factorial
+
+# ======================
+# 基本記号
+# ======================
+x, y = "x", "y"
+
+
+# ======================
+# 線形結合（dict版）
+# ======================
+def lc_add(A, B):
+    C = {}
+
+    for k, v in A.items():
+        C[k] = C.get(k, 0) + v
+
+    for k, v in B.items():
+        C[k] = C.get(k, 0) + v
+
+    return {k: v for k, v in C.items() if v != 0}
+
+
+def lc_scale(c, A):
+    return {k: c * v for k, v in A.items()}
+
+
+# ======================
+# index ⇄ word
+# ======================
+def index_to_word1(n):
+    return (x,) * (n - 1) + (y,)
+
+
+def index_to_word(alpha):
+    w = ()
+    for n in alpha:
+        w += index_to_word1(n)
+    return w
+
+
+def word_to_index(w):
+    cnt = 0
+    idx = []
+
+    for s in w:
+        if s == x:
+            cnt += 1
+        elif s == y:
+            idx.append(cnt + 1)
+            cnt = 0
+        else:
+            return None
+
+    if cnt > 0:
+        return None
+
+    return tuple(idx)
+
+
+# ======================
+# shuffle（word版）
+# ======================
+@lru_cache(None)
+def shuffle_word(v, w):
+    if not v:
+        return {w: 1}
+    if not w:
+        return {v: 1}
+
+    t1 = {}
+    for ww, c in shuffle_word(v[1:], w).items():
+        t1[(v[0],) + ww] = c
+
+    t2 = {}
+    for ww, c in shuffle_word(v, w[1:]).items():
+        t2[(w[0],) + ww] = c
+
+    return lc_add(t1, t2)
+
+
+# ======================
+# shuffle（index版）
+# ======================
+def qshuffle(a, b):
+    v = index_to_word(a[::-1])
+    w = index_to_word(b[::-1])
+
+    sw = shuffle_word(v, w)
+
+    out = {}
+    for word, c in sw.items():
+        idx = word_to_index(word)
+        if idx is not None:
+            out[idx[::-1]] = c
+
+    return out
+
+
+# ======================
+# trailing 1 操作
+# ======================
+def trailing_ones_len(k):
+    t = 0
+    for a in reversed(k):
+        if a == 1:
+            t += 1
+        else:
+            break
+    return t
+
+
+def pick_key(A):
+    for k in A:
+        if k and k[-1] == 1:
+            return k
+    return None
+
+
+def has_trailing_one(A):
+    return any(k and k[-1] == 1 for k in A)
+
+
+# ======================
+# 1ステップ消去
+# ======================
+def eliminate_one_step(A):
+    k = pick_key(A)
+    if k is None:
+        return A
+
+    coeff = A[k]
+    t = trailing_ones_len(k)
+
+    prefix = k[:-t]
+    ones = (1,) * t
+
+    A2 = lc_add(A, lc_scale(-coeff, qshuffle(prefix, ones)))
+
+    return A2
+
+
+# ======================
+# 全消去
+# ======================
+def eliminate_all(A):
+    cur = dict(A)
+
+    while has_trailing_one(cur):
+        cur = eliminate_one_step(cur)
+
+    return cur
+
+
+# ======================
+# RegShuffle（定数項のみ）
+# ======================
+import sympy as sp
+
+Z = sp.Function("Z")
+ZS = sp.Function("ZS")
+
+def mzv_add(A, B):
+    C = {}
+    for k, v in A.items():
+        C[k] = C.get(k, 0) + v
+    for k, v in B.items():
+        C[k] = C.get(k, 0) + v
+    return {k: v for k, v in C.items() if v != 0}
+
+def mzv_scale(c, A):
+    return {k: c*v for k, v in A.items()}
+
+def index_to_Z(A):
+    return {tuple(k): v for k, v in A.items()}
+
+def format_mzv(A):
+    terms = []
+    for k, v in A.items():
+        if v == 1:
+            terms.append(f"Z{tuple(k)}")
+        else:
+            terms.append(f"{v}*Z{tuple(k)}")
+    return " + ".join(terms) if terms else "0"
+
+# --- ここから追加 ---
+def is_Z(expr):
+    return expr.func == Z
+
+def is_ZS(expr):
+    return expr.func == ZS
+
+def Z_to_dict(expr):
+    return {tuple(expr.args): 1}
+
+def RegShuffle(expr):
+
+    # --- dict ---
+    if isinstance(expr, dict):
+        return sp.expand(format_mzv(eliminate_all(expr)))
+
+    # --- 数 ---
+    if expr.is_Number:
+        return expr
+
+    # --- ZSはそのまま ---
+    if is_ZS(expr):
+        return expr
+
+    # --- ★ ここが本質：Zを計算する ---
+    if is_Z(expr):
+        d = Z_to_dict(expr)
+        return RegShuffle(d)
+
+    # --- 加法 ---
+    if expr.is_Add:
+        return sp.Add(*[RegShuffle(a) for a in expr.args])
+
+    # --- 乗法 ---
+    if expr.is_Mul:
+        return sp.Mul(*[RegShuffle(a) for a in expr.args])
+
+    return expr
+# --- ここまで ---
+
 
 # -----------------------
 # 基本関数
@@ -60,7 +311,7 @@ ZS = sp.Function("ZS")
 ZF  = sp.Function("ZF")
 zeta2 = sp.Function("zeta2")
 zetav = sp.Function("zetav")
-zeta = sp.Function("zeta")
+zetareg = sp.Function("zetareg")
 zetasym = sp.Function("zetasym")
 
 def P2Hom(X, k):
@@ -76,7 +327,7 @@ def ZHom(X, k):
     total = 0
     for a in compositions(k, r):
         prod = reduce(mul, (pow_func(X[j], a[j]) for j in range(r)), 1)
-        total += zeta(*[ai+1 for ai in a]) * prod
+        total += zetareg(*[ai+1 for ai in a]) * prod
     return sp.expand(total)
 
 def ZsymHom(X, k):
@@ -110,17 +361,17 @@ def Relation1(X,k):
     for i in range(1, r-1):
         left = [X[i]-X[j] for j in range(i)]
         right = [X[j]-X[i] for j in range(i+1,r)]
-        total -= (-1)**i * (X[i] - X[-1]) * ZZHom(left, right,k-1)
+        total -= (-1)**i * (X[i] - X[-1]) * ZZHom(list(reversed(left)),right,k-1)
     return sp.expand(total)
 
 def Relation0(X,k):
     X = list(X) if not isinstance(X, list) else X
     r = len(X)
-    total = 0
+    total = 0  # Mathematica の P2@@X
     for i in range(1, r-1):
         left = [X[i]-X[j] for j in range(i)]
         right = [X[j]-X[i] for j in range(i+1,r)]
-        total = (-1)**i * (X[i] - X[-1]) * ZZHom(left, right,k-1)
+        total += (-1)**i * (X[i] - X[-1]) * ZZHom(list(reversed(left)),right,k-1)
     return sp.expand(total)
 
 def Relation2(X, k):
@@ -144,26 +395,31 @@ def Relation2(X, k):
     return sp.expand(P1 - ZS)
 
 def Relation3(X,k):
-    X = list(X) if not isinstance(X, list) else X
+    X = list(X)
     X1 = X[0]
 
+    def replace_first(XL):
+        return [0] + XL[1:]
+    def replace_last(XL):
+        return XL[:-1] + [0]
+    def replace_both(XL):
+        return [0] + XL[1:-1] + [0]
     def Rem1(XL):
-        XL_copy = XL.copy()
-        term = -ZVHom(XL_copy,k-2) + Relation0(XL_copy,k)
-        XL_copy1 = XL_copy.copy(); XL_copy1[0]=0
-        XL_copy2 = XL_copy.copy(); XL_copy2[-1]=0
-        XL_copy3 = XL_copy.copy(); XL_copy3[0]=0; XL_copy3[-1]=0
-        term -= Relation0(XL_copy1,k)
-        term -= Relation0(XL_copy2,k)
-        term += Relation0(XL_copy3,k)
-        return sp.expand(term)
+        return (
+            -ZVHom(XL, k-2)
+            + Relation0(XL, k)
+            - Relation0(replace_first(XL), k)
+            - Relation0(replace_last(XL), k)
+            + Relation0(replace_both(XL), k)
+        )
 
     term1 = Rem1(X)
-    X_replace = X.copy(); X_replace[-1]=0
-    term2 = X1 * Relation2(X_replace,k)
-    X_replace2 = X.copy(); X_replace2[0]=0
-    term3 = Rem1([x-X1 for x in X_replace2])
-    return sp.expand(1/X1 * (term1 + term2 + term3))
+    X_replace = replace_last(X)
+    term2 = X1 * Relation2(X_replace, k)
+    X_replace2 = replace_first(X)
+    term3 = Rem1([x - X1 for x in X_replace2])
+
+    return sp.simplify((term1 + term2 + term3)/X1)
 
 # -----------------------
 # Dual 系
@@ -264,18 +520,14 @@ def Last1Equ(X, k):
     return sp.expand(expr)
 
 def replace_zeta2(expr):
-    # 式全体を再帰的に置換
     if expr.func == zeta2:
         XL = expr.args
         if all(x.is_Integer for x in XL):
-            return ZS(*DualIndex(shiftEnds(list(XL))))
+            return (-1)**sum(XL) * ZS(*DualIndex(shiftEnds(list(XL))))
         return expr
     elif expr.args:
-        # 再帰的に args を置換
-        new_args = tuple(replace_zeta2(a) for a in expr.args)
-        return expr.func(*new_args)
-    else:
-        return expr
+        return expr.func(*[replace_zeta2(a) for a in expr.args])
+    return expr
     
 def replace_zetav(expr):
     if expr.func == zetav:
@@ -284,10 +536,8 @@ def replace_zetav(expr):
             return ZS(*DualIndex(list(XL)))
         return expr
     elif expr.args:
-        new_args = tuple(replace_zetav(a) for a in expr.args)
-        return expr.func(*new_args)
-    else:
-        return expr
+        return expr.func(*[replace_zetav(a) for a in expr.args])
+    return expr
 
 def Last2Equ(X, k):
     expr = Last1Equ(X, k)
@@ -296,17 +546,23 @@ def Last2Equ(X, k):
     expr = replace_zeta2(expr)
     expr = replace_zetav(expr)
 
-    expr = expr.replace(lambda e: e.func == zeta, lambda e: Z(*e.args))
+    expr = expr.replace(lambda e: e.func == zetareg, lambda e: Z(*e.args))
     expr = expr.replace(lambda e: e.func == zetasym, lambda e: ZS(*e.args))
 
     return expr
 
-def Zetaeq(ind):
-    ind = list(ind)
-    r = len(ind)
-    k = sum(ind)
+def Zetaeq(*ind):
+    ind = [int(x) for x in ind]
+
+    r = int(len(ind))
+    k = int(sum(ind))
+
     Xlist = [sp.Symbol(f"X{i}") for i in range(1, r+2)]
-    expr = Last2Equ(Xlist, k - r + 1)
+
+    if all(x == 1 for x in ind[:-1]) and ind[-1] == 2:
+        return sp.expand(Last2Equ(Xlist, 2))
+    
+    expr = Last2Equ(Xlist, int(k - r + 1))
 
     # 係数抽出
     monomial = 1
@@ -315,27 +571,26 @@ def Zetaeq(ind):
         monomial *= Xlist[i-1]**power
 
     coeff = sp.expand(expr).coeff(monomial)
+    coeffReg = RegShuffle(coeff)
 
-    return sp.expand(coeff / (ind[-1] - 1))
+    return sp.expand(coeffReg / (ind[-1] - 1))
 
-result = Zetaeq([2,3])
-print(result)
+
+def mzv(*ind):
+    expr = Zetaeq(*ind)
+    s = sp.latex(expr)
+
+    s = s.replace("ZS", r"\zeta_S")
+    s = s.replace("Z", r"\zeta")
+
+    return html(f"$$ {s} $$")
 
 </script>
 </div>
 
-<h2>Your code</h2>
-    <div class="compute"><script type="text/x-sage"></script></div>
-<h2>Usage</h2>
-<ol>
-  <li> Click the &ldquo;Activate&rdquo; button </li>
-  <li> Type your code at the above box.</li>
-  <li> Click &ldquo;Evaluate&rdquo; button. </li>
-  <li> Repeat 2 and 3.</li>
-</ol>
-The followings are examples of usage. The author of this page is <a href="https://sites.google.com/view/minoru-hirose">Minoru Hirose</a>. See <a href="https://github.com/MinoruHirose/mzv-online-tools">github page</a> for the source code.
+<p>Example: mzv(2,3)</p>
+<div class="compute"><script type="text/x-sage"></script></div>
 
 
-
-  </body>
+</body>
 </html>
